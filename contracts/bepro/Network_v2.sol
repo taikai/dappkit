@@ -8,8 +8,7 @@ import "../math/SafePercentMath.sol";
 import "../utils/Governed.sol";
 import "./BountyToken.sol";
 import "./INetwork_v2.sol";
-
-
+import "./Network_Registry.sol";
 
 
 contract Network_v2 is Governed, ReentrancyGuard {
@@ -19,24 +18,27 @@ contract Network_v2 is Governed, ReentrancyGuard {
         address _settlerToken,
         address _nftTokenAddress,
         string memory _bountyNftUri,
-        address _treasuryAddress,
-        uint256 _cancelFee,
-        uint256 _closeFee
+//        address _treasuryAddress,
+//        uint256 _cancelFee,
+//        uint256 _closeFee,
+        address _registry
     ) Governed() ReentrancyGuard() {
-        settlerToken = ERC20(_settlerToken);
+        networkToken = ERC20(_settlerToken);
         nftToken = BountyToken(_nftTokenAddress);
         bountyNftUri = _bountyNftUri;
-        closeFee = _closeFee;
-        cancelFee = _cancelFee;
-        treasury = _treasuryAddress;
+        registry = Network_Registry(_registry);
+//        closeFee = _closeFee;
+//        cancelFee = _cancelFee;
+//        treasury = _treasuryAddress;
     }
 
-    ERC20 public settlerToken;
+    ERC20 public networkToken;
     BountyToken public nftToken;
+    Network_Registry public registry;
 
     string public bountyNftUri = "";
 
-    uint256 public totalSettlerLocked = 0; // TVL essentially
+    uint256 public totalNetworkToken = 0; // TVL essentially
 
     uint256 public oracleExchangeRate = 10000; // 10,000 = 1:1 ; parts per 10K
     uint256 public oraclesDistributed = 0; // essentially, the converted math of TVL
@@ -54,9 +56,9 @@ contract Network_v2 is Governed, ReentrancyGuard {
 
     uint256 public councilAmount = 25000000*10**18; // 25M * 10 to the power of 18 (decimals)
 
-    address treasury = address(0);
-    uint256 closeFee = 50000;
-    uint256 cancelFee = 10000;
+//    address treasury = address(0);
+//    uint256 closeFee = 50000;
+//    uint256 cancelFee = 10000;
 
     uint256 public bountiesIndex = 0;
     mapping(uint256 => INetwork_v2.Bounty) bounties;
@@ -119,7 +121,9 @@ contract Network_v2 is Governed, ReentrancyGuard {
     }
 
     function treasuryInfo() external view returns(address, uint256, uint256) {
-        return (treasury, closeFee, cancelFee);
+        if (address(registry) != address(0))
+            return (registry.treasury(), registry.closeFee(), registry.cancelFee());
+        return (address(0), 0, 0);
     }
 
     function lessThan20MoreThan1(uint256 value) internal {
@@ -129,8 +133,8 @@ contract Network_v2 is Governed, ReentrancyGuard {
 
     function changeNetworkParameter(uint256 _parameter, uint256 _value) public payable onlyGovernor {
         if (_parameter == uint256(INetwork_v2.Params.councilAmount)) {
-            require(_value >= 1 * 10 ** settlerToken.decimals(), "C1");
-            require(_value <= 50000000 * 10 ** settlerToken.decimals(), "C2");
+            require(_value >= 1 * 10 ** networkToken.decimals(), "C1");
+            require(_value <= 50000000 * 10 ** networkToken.decimals(), "C2");
             councilAmount = _value;
         } else if (_parameter == uint256(INetwork_v2.Params.draftTime)) {
             lessThan20MoreThan1(_value);
@@ -146,20 +150,14 @@ contract Network_v2 is Governed, ReentrancyGuard {
             mergeCreatorFeeShare = _value;
         } else if (_parameter == uint256(INetwork_v2.Params.oracleExchangeRate)) {
             require(_value >= 0, "EX0");
-            require(totalSettlerLocked == 0, "EX1");
+            require(totalNetworkToken == 0, "EX1");
             oracleExchangeRate = _value;
-        } else if(_parameter == uint256(INetwork_v2.Params.cancelFee)){
-            require(_value >= 0, "CF1");
-            cancelFee = _value;
-        } else if (_parameter == uint256(INetwork_v2.Params.cancelableTime)) {
+        }
+
+        else if (_parameter == uint256(INetwork_v2.Params.cancelableTime)) {
             require(_value >= 180 days, "C3");
             cancelableTime = _value;
         }
-    }
-
-    function updateTresuryAddress(address _address) public payable onlyGovernor{
-        require(_address != address(0), 'UTA1');
-        treasury = address(_address);
     }
 
     function amountGT0(uint256 _amount) internal view {
@@ -171,15 +169,15 @@ contract Network_v2 is Governed, ReentrancyGuard {
         if (lock) {
             exchanged = amount.mul(oracleExchangeRate.div(10000));
             oracles[msg.sender].locked = oracles[msg.sender].locked.add(exchanged);
-            require(settlerToken.transferFrom(msg.sender, address(this), amount), "MO0");
-            totalSettlerLocked = totalSettlerLocked.add(amount);
+            require(networkToken.transferFrom(msg.sender, address(this), amount), "MO0");
+            totalNetworkToken = totalNetworkToken.add(amount);
             oraclesDistributed = oraclesDistributed.add(exchanged);
         } else {
             exchanged = amount.div(oracleExchangeRate.div(10000));
             require(amount <= oracles[msg.sender].locked, "MO1");
-            require(settlerToken.transfer(msg.sender, exchanged), "MO2");
+            require(networkToken.transfer(msg.sender, exchanged), "MO2");
             oracles[msg.sender].locked = oracles[msg.sender].locked.sub(amount);
-            totalSettlerLocked = totalSettlerLocked.sub(exchanged);
+            totalNetworkToken = totalNetworkToken.sub(exchanged);
             oraclesDistributed = oraclesDistributed.sub(amount);
 
         }
@@ -232,6 +230,15 @@ contract Network_v2 is Governed, ReentrancyGuard {
 
         bounties[bountiesIndex].closed = false;
         bounties[bountiesIndex].canceled = false;
+
+        if (address(registry) != address(0)) {
+            if (registry.treasury() != address(0)) {
+                require(registry.allowedTransactionalTokens(transactional) != address(0), "O6");
+                if (fundingAmount > 0 && address(0) != rewardToken) {
+                    require(registry.allowedRewardTokens(rewardToken) != address(0), "O7");
+                }
+            }
+        }
 
         if (address(0) != rewardToken) {
             require(tokenAmount == 0, "O1");
@@ -288,9 +295,12 @@ contract Network_v2 is Governed, ReentrancyGuard {
         bounty.canceled = true;
 
         uint256 returnAmount = bounty.tokenAmount;
-        if (treasury != address(0)) {
-            returnAmount = returnAmount.sub(bounty.tokenAmount.div(100).mul(cancelFee.div(10000)));
-            require(erc20.transfer(treasury, bounty.tokenAmount.div(100).mul(cancelFee.div(10000))), "C3");
+        if (address(registry) != address(0)) {
+            if (registry.treasury() != address(0)) {
+                uint256 treasuryFee = bounty.tokenAmount.div(100).mul(registry.cancelFee().div(10000));
+                returnAmount = returnAmount.sub(treasuryFee);
+                require(erc20.transfer(registry.treasury(), treasuryFee), "C3");
+            }
         }
 
         require(erc20.transfer(bounty.creator, returnAmount), "C2");
@@ -563,10 +573,12 @@ contract Network_v2 is Governed, ReentrancyGuard {
 
         uint256 returnAmount = bounty.tokenAmount;
 
-        if (treasury != address(0)) {
-            uint256 treasuryAmount = bounty.tokenAmount.div(100).mul(closeFee.div(10000));
-            returnAmount = returnAmount.sub(treasuryAmount);
-            require(erc20.transfer(treasury, treasuryAmount), "C3");
+        if (address(registry) != address(0)) {
+            if (registry.treasury() != address(0)) {
+                uint256 treasuryAmount = bounty.tokenAmount.div(100).mul(registry.closeFee().div(10000));
+                returnAmount = returnAmount.sub(treasuryAmount);
+                require(erc20.transfer(registry.treasury(), treasuryAmount), "C3");
+            }
         }
 
         uint256 mergerFee = returnAmount.div(100).mul(mergeCreatorFeeShare.div(10000));

@@ -2,6 +2,7 @@ pragma abicoder v2;
 
 import "./BountyToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "./Network_Registry.sol";
 
 interface INetwork_v2 {
 
@@ -91,7 +92,7 @@ interface INetwork_v2 {
         cancelableTime
     }
 
-    function totalSettlerLocked() external view returns (uint256);
+    function totalNetworkToken() external view returns (uint256);
 
     function closedBounties() external view returns (uint256);
     function canceledBounties() external view returns (uint256);
@@ -108,6 +109,7 @@ interface INetwork_v2 {
     function manageOracles(bool lock, uint256 amount) external;
     function delegateOracles(uint256 amount, address toAddress) external;
     function takeBackOracles(uint256 entryId) external;
+    function registry() external view returns (address);
 
     function openBounty(
         uint256 tokenAmount,

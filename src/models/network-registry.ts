@@ -13,6 +13,7 @@ import {AbiItem} from 'web3-utils';
 import { fromSmartContractDecimals, toSmartContractDecimals } from '@utils/numbers';
 import {TenK} from "@utils/constants";
 import {Governed} from "@base/governed";
+import {allowedTokens as _allowedTokens} from "@utils/allowed-tokens";
 
 export class Network_Registry extends Model<Network_RegistryMethods> implements Deployable {
   private _token!: ERC20;
@@ -45,7 +46,9 @@ export class Network_Registry extends Model<Network_RegistryMethods> implements 
   async deployJsonAbi(_erc20: string,
                       _lockAmountForNetworkCreation: number,
                       treasury: string,
-                      lockFeePercentage: number) {
+                      lockFeePercentage: number,
+                      closeFee = 10000,
+                      cancelFee = 20000) {
 
     const token = new ERC20(this.connection, _erc20);
     await token.loadContract();
@@ -53,7 +56,8 @@ export class Network_Registry extends Model<Network_RegistryMethods> implements 
     const deployOptions = {
       data: Network_RegistryJson.bytecode,
       arguments: [
-        _erc20, toSmartContractDecimals(_lockAmountForNetworkCreation, token.decimals), treasury, lockFeePercentage
+        _erc20, toSmartContractDecimals(_lockAmountForNetworkCreation, token.decimals), treasury, lockFeePercentage,
+        closeFee, cancelFee
       ]
     }
     return this.deploy(deployOptions, this.connection.Account);
@@ -110,8 +114,33 @@ export class Network_Registry extends Model<Network_RegistryMethods> implements 
     return this.sendTx(this.contract.methods.registerNetwork(networkAddress));
   }
 
-  async changeAmountForNetworkCreation(newAmount: number) { 
+  async changeAmountForNetworkCreation(newAmount: number) {
+    newAmount = toSmartContractDecimals(newAmount, this.token.decimals);
     return this.sendTx(this.contract.methods.changeAmountForNetworkCreation(newAmount));
+  }
+
+  async changeLockPercentageFee(newAmount: number) {
+    return this.sendTx(this.contract.methods.changeLockPercentageFee(newAmount * TenK));
+  }
+
+  async changeGlobalFees(closeFee: number, cancelFee: number) {
+    return this.sendTx(this.contract.methods.changeGlobalFees(closeFee * TenK, cancelFee * TenK))
+  }
+
+  async addAllowedTokens(addresses: string[], isTransactional: boolean) {
+    return this.sendTx(this.contract.methods.addAllowedTokens(addresses, isTransactional));
+  }
+
+  async removeAllowedTokens(addressIds: number[], isTransactional: boolean) {
+    return this.sendTx(this.contract.methods.removeAllowedTokens(addressIds, isTransactional));
+  }
+
+  async getAllowedTokens() {
+    return _allowedTokens(await this.callTx(this.contract.methods.getAllowedTokens()));
+  }
+
+  async allowedTokens(x: number, y: number) {
+    return this.callTx(this.contract.methods.allowedTokens(x, y));
   }
 
   async getGovernorTransferredEvents(filter: PastEventOptions): Promise<XEvents<Events.GovernorTransferredEvent>[]> {
@@ -128,3 +157,5 @@ export class Network_Registry extends Model<Network_RegistryMethods> implements 
     return this.contract.self.getPastEvents('UserLockedAmountChanged', filter);
   }
 }
+
+export class NetworkRegistry extends Network_Registry {}
